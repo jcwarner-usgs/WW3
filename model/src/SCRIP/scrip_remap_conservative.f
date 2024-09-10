@@ -252,8 +252,11 @@ C$OMP& srch_center_lon_find_adj_cell)
 !
 !-----------------------------------------------------------------------
 
+#ifdef W3_SCRIPMPI
       USE W3ADATMD, ONLY: MPI_COMM_WAVE
-
+      USE W3ODATMD, ONLY: IAPROC, NTPROC
+      INCLUDE "mpif.h"
+#endif
       logical(SCRIP_Logical), intent(in) :: l_master   ! Am I the master
                                                    ! processor (do I/O)?
       logical(SCRIP_Logical), intent(in) :: l_test     ! Whether to
@@ -264,11 +267,9 @@ C$OMP& srch_center_lon_find_adj_cell)
 !     local variables
 !
 !-----------------------------------------------------------------------
-!#ifdef W3_SCRIP_JCW
-      include 'mpif.h'
-      integer (SCRIP_i4) :: MyStr, MyEnd, MyComm
-      integer (SCRIP_i4) :: MyError, MyRank, Nprocs, rank
-      integer (SCRIP_i4) :: ratio
+#ifdef W3_SCRIPMPI
+      integer (SCRIP_i4) :: grid1_str, grid1_end, grid2_str, grid2_end
+      integer (SCRIP_i4) :: IERR_MPI, IPROC, ratio
       integer (SCRIP_i4) :: j, ij, add1, add2, got_weight
       integer (SCRIP_i4) :: nlink, min_link, max_link
       integer (SCRIP_i4), dimension(MPI_STATUS_SIZE) :: status
@@ -276,11 +277,10 @@ C$OMP& srch_center_lon_find_adj_cell)
       integer (SCRIP_i4), dimension(:), allocatable :: Asendi
       integer (SCRIP_i4), dimension(:), allocatable :: Arecv1
       integer (SCRIP_i4), dimension(:), allocatable :: Arecv2
-!#endif
+#endif
 
       integer (SCRIP_i4), parameter ::
      &     phi_or_theta = 2      ! integrate w.r.t. phi (1) or theta (2)
-
 
       integer (SCRIP_i4) ::
      &     i, inext,            !
@@ -316,12 +316,12 @@ C$OMP& srch_center_lon_find_adj_cell)
                                 ! and true area
      &     ref_area             ! Area of cell as computed by direct
                                 ! integration around its boundaries
-!#ifdef W3_SCRIP_JCW
+#ifdef W3_SCRIPMPI
       real (SCRIP_r8), dimension(:), allocatable   ::  Asend
       real (SCRIP_r8), dimension(:), allocatable   ::  Arecvw
-      real (SCRIP_r8), dimension(:), allocatable ::  Arecv
+      real (SCRIP_r8), dimension(:), allocatable   ::  Arecv
       real (SCRIP_r8), dimension(:,:), allocatable ::  Arecvw2d
-!#endif
+#endif
 
 !      call OMP_SET_DYNAMIC(.FALSE.)
 
@@ -359,27 +359,28 @@ C$OMP PARALLEL DEFAULT(SHARED) PRIVATE(grid1_add) NUM_THREADS(nthreads)
 C$OMP DO SCHEDULE(DYNAMIC)
 
 
-!#ifdef W3_SCRIP_JCW
-      MyComm=MPI_COMM_WAVE
-      CALL mpi_comm_rank (MyComm, MyRank, MyError)
-      CALL mpi_comm_size (MyComm, Nprocs, MyError)
+#ifdef W3_SCRIPMPI
 !
 ! To do this in mpi, we will just break up the sweep loops into chunks. Then
 ! gather all of the data at end of each loop so that each proc has a full set of
 ! data. First we want to determine start and end chunks for this processor.
 !
-      IF (Nprocs.eq.1) THEN
-        MyStr=1
-        MyEnd=grid1_size
+! Revert back to 0 based processor number.
+      IPROC=IAPROC-1
+      IF (NTPROC.eq.1) THEN
+        grid1_str=1
+        grid1_end=grid1_size
       ELSE
-        ratio=INT(grid1_size/Nprocs)
-        MyStr=(MyRank*ratio)+1
-        MyEnd=MyStr+ratio-1
-        IF (MyRank+1.eq.Nprocs) MyEnd=grid1_size
+        ratio=INT(grid1_size/NTPROC)
+        grid1_str=(IPROC*ratio)+1
+        grid1_end=grid1_str+ratio-1
+        IF (IPROC+1.eq.NTPROC) grid1_end=grid1_size
       END IF
-
-!jcw  do grid1_add = 1,grid1_size
-      do grid1_add = MyStr,MyEnd
+#else
+      grid1_str=1
+      grid1_end=grid1_size
+#endif
+      do grid1_add = grid1_str,grid1_end
 
          if (mod(grid1_add,progint) .eq. 0 .and. is_master) then
             print *, grid1_add,' of ',grid1_size,' cells processed ...'
@@ -394,12 +395,12 @@ C$OMP END DO
 C$OMP END PARALLEL
 
 
-!#ifdef W3_SCRIP_JCW
+#ifdef W3_SCRIPMPI
 !
-!  Here we need to gather all the data to each proc so they know the
-!  full data set.
+!  Here we need to gather all the data processed and 
+!  send to each proc so they know the full data set.
 !
-!  first_call
+!  grid1 integrate
 !
       allocate (Asend(grid1_size))
       allocate (Arecv(grid1_size))
@@ -411,11 +412,11 @@ C$OMP END PARALLEL
         Arecv(grid1_add)=zero
       END DO
 !  fill the send for this tile.
-      DO grid1_add=MyStr,MyEnd
+      DO grid1_add=grid1_str,grid1_end
         Asend(grid1_add)=grid1_frac(grid1_add)
       END DO
-      call mpi_allreduce(Asend, Arecv, grid1_size, MPI_DOUBLE,                 &
-     &                   MPI_SUM, MyComm, MyError)
+      call mpi_allreduce(Asend, Arecv, grid1_size, MPI_DOUBLE,          &
+     &                   MPI_SUM, MPI_COMM_WAVE, IERR_MPI)
 !  fill the working array as a sum from all nodes.
       DO grid1_add=1,grid1_size
         grid1_frac(grid1_add)=Arecv(grid1_add)
@@ -428,11 +429,11 @@ C$OMP END PARALLEL
         Arecv(grid1_add)=zero
       END DO
 !  fill the send for this tile.
-      DO grid1_add=MyStr,MyEnd
+      DO grid1_add=grid1_str,grid1_end
         Asend(grid1_add)=grid1_area(grid1_add)
       END DO
-      call mpi_allreduce(Asend, Arecv, grid1_size, MPI_DOUBLE,                 &
-     &                   MPI_SUM, MyComm, MyError)
+      call mpi_allreduce(Asend, Arecv, grid1_size, MPI_DOUBLE,          &
+     &                   MPI_SUM, MPI_COMM_WAVE, IERR_MPI)
 !  fill the working array as a sum from all nodes.
       DO grid1_add=1,grid1_size
         grid1_area(grid1_add)=Arecv(grid1_add)
@@ -445,11 +446,11 @@ C$OMP END PARALLEL
         Arecv(grid1_add)=zero
       END DO
 !  fill the send for this tile.
-      DO grid1_add=MyStr,MyEnd
+      DO grid1_add=grid1_str,grid1_end
         Asend(grid1_add)=grid1_centroid_lat(grid1_add)
       END DO
-      call mpi_allreduce(Asend, Arecv, grid1_size, MPI_DOUBLE,                 &
-     &                   MPI_SUM, MyComm, MyError)
+      call mpi_allreduce(Asend, Arecv, grid1_size, MPI_DOUBLE,          &
+     &                   MPI_SUM, MPI_COMM_WAVE, IERR_MPI)
 !  fill the working array as a sum from all nodes.
       DO grid1_add=1,grid1_size
         grid1_centroid_lat(grid1_add)=Arecv(grid1_add)
@@ -462,11 +463,11 @@ C$OMP END PARALLEL
         Arecv(grid1_add)=zero
       END DO 
 !  fill the send for this tile.
-      DO grid1_add=MyStr,MyEnd
+      DO grid1_add=grid1_str,grid1_end
         Asend(grid1_add)=grid1_centroid_lon(grid1_add)
       END DO
-      call mpi_allreduce(Asend, Arecv, grid1_size, MPI_DOUBLE,                 &
-     &                   MPI_SUM, MyComm, MyError)
+      call mpi_allreduce(Asend, Arecv, grid1_size, MPI_DOUBLE,          &
+     &                   MPI_SUM, MPI_COMM_WAVE, IERR_MPI)
 !  fill the working array as a sum from all nodes.
       DO grid1_add=1,grid1_size
         grid1_centroid_lon(grid1_add)=Arecv(grid1_add)
@@ -485,14 +486,14 @@ C$OMP END PARALLEL
       DO grid2_add=1,grid2_size
         Asend(grid2_add)=grid2_frac(grid2_add)
       END DO
-      call mpi_allreduce(Asend, Arecv, grid2_size, MPI_DOUBLE,                 &
-     &                   MPI_SUM, MyComm, MyError)
+      call mpi_allreduce(Asend, Arecv, grid2_size, MPI_DOUBLE,          &
+     &                   MPI_SUM, MPI_COMM_WAVE, IERR_MPI)
 !  fill the working array as a sum from all nodes.
       DO grid2_add=1,grid2_size
         grid2_frac(grid2_add)=Arecv(grid2_add)
       END DO
       deallocate(Asend, Arecv)
-!#endif
+#endif
 
 !-----------------------------------------------------------------------
 !
@@ -523,24 +524,26 @@ C$OMP PARALLEL DEFAULT(SHARED) PRIVATE(grid2_add) NUM_THREADS(nthreads)
 
 C$OMP DO SCHEDULE(DYNAMIC)
 
-!#ifdef W3_SCRIP_JCW
+#ifdef W3_SCRIPMPI
 !
 ! To do this in mpi, we will just break up the sweep loops into chunks. Then
 ! gather all of the data at end of each loop so that each proc has a full set of
 ! data. First we want to determine start and end chunks for this processor.
 !
-      IF (Nprocs.eq.1) THEN
-        MyStr=1
-        MyEnd=grid2_size
+      IF (NTPROC.eq.1) THEN
+        grid2_str=1
+        grid2_end=grid2_size
       ELSE
-        ratio=INT(grid2_size/Nprocs)
-        MyStr=(MyRank*ratio)+1
-        MyEnd=MyStr+ratio-1
-        IF (MyRank+1.eq.Nprocs) MyEnd=grid2_size
+        ratio=INT(grid2_size/NTPROC)
+        grid2_str=(IPROC*ratio)+1
+        grid2_end=grid2_str+ratio-1
+        IF (IPROC+1.eq.NTPROC) grid2_end=grid2_size
       END IF
-
-!jcw  do grid2_add = 1,grid2_size
-      do grid2_add = MyStr,MyEnd
+#else
+      grid2_str=1
+      grid2_end=grid2_size
+#endif
+      do grid2_add = grid2_str,grid2_end
 
          if (mod(grid2_add,progint) .eq. 0 .and. is_master) then
             print *, grid2_add,' of ',grid2_size,' cells processed ...'
@@ -557,12 +560,12 @@ C$OMP END PARALLEL
       call timer_stop(2)
 
 
-!#ifdef W3_SCRIP_JCW
+#ifdef W3_SCRIPMPI
 !
-!  Here we need to gather all the data to each proc so they know the
-!  full data set.
+!  Here we need to gather all the data processed and 
+!  send to each proc so they know the full data set.
 !
-!  second_call
+!  grid2 integrate
 !
       allocate (Asend(grid2_size))
       allocate (Arecv(grid2_size))
@@ -574,11 +577,11 @@ C$OMP END PARALLEL
         Arecv(grid2_add)=zero
       END DO
 !  fill the send for this tile.
-      DO grid2_add=MyStr,MyEnd
+      DO grid2_add=grid2_str,grid2_end
         Asend(grid2_add)=grid2_frac(grid2_add)
       END DO
-      call mpi_allreduce(Asend, Arecv, grid2_size, MPI_DOUBLE,                 &
-     &                   MPI_SUM, MyComm, MyError)
+      call mpi_allreduce(Asend, Arecv, grid2_size, MPI_DOUBLE,          &
+     &                   MPI_SUM, MPI_COMM_WAVE, IERR_MPI)
 !  fill the working array as a sum from all nodes.
       DO grid2_add=1,grid2_size
         grid2_frac(grid2_add)=Arecv(grid2_add)
@@ -591,11 +594,11 @@ C$OMP END PARALLEL
         Arecv(grid2_add)=zero
       END DO
 !  fill the send for this tile.
-      DO grid2_add=MyStr,MyEnd
+      DO grid2_add=grid2_str,grid2_end
         Asend(grid2_add)=grid2_area(grid2_add)
       END DO
-      call mpi_allreduce(Asend, Arecv, grid2_size, MPI_DOUBLE,                 &
-     &                   MPI_SUM, MyComm, MyError)
+      call mpi_allreduce(Asend, Arecv, grid2_size, MPI_DOUBLE,          &
+     &                   MPI_SUM, MPI_COMM_WAVE, IERR_MPI)
 !  fill the working array as a sum from all nodes.
       DO grid2_add=1,grid2_size
         grid2_area(grid2_add)=Arecv(grid2_add)
@@ -608,11 +611,11 @@ C$OMP END PARALLEL
         Arecv(grid2_add)=zero
       END DO
 !  fill the send for this tile.
-      DO grid2_add=MyStr,MyEnd
+      DO grid2_add=grid2_str,grid2_end
         Asend(grid2_add)=grid2_centroid_lat(grid2_add)
       END DO
-      call mpi_allreduce(Asend, Arecv, grid2_size, MPI_DOUBLE,                 &
-     &                   MPI_SUM, MyComm, MyError)
+      call mpi_allreduce(Asend, Arecv, grid2_size, MPI_DOUBLE,          &
+     &                   MPI_SUM, MPI_COMM_WAVE, IERR_MPI)
 !  fill the working array as a sum from all nodes.
       DO grid2_add=1,grid2_size
         grid2_centroid_lat(grid2_add)=Arecv(grid2_add)
@@ -626,11 +629,11 @@ C$OMP END PARALLEL
         Arecv(grid2_add)=zero
       END DO
 !  fill the send for this tile.
-      DO grid2_add=MyStr,MyEnd
+      DO grid2_add=grid2_str,grid2_end
         Asend(grid2_add)=grid2_centroid_lon(grid2_add)
       END DO
-      call mpi_allreduce(Asend, Arecv, grid2_size, MPI_DOUBLE,                 &
-     &                   MPI_SUM, MyComm, MyError)
+      call mpi_allreduce(Asend, Arecv, grid2_size, MPI_DOUBLE,          &
+     &                   MPI_SUM, MPI_COMM_WAVE, IERR_MPI)
 !  fill the working array as a sum from all nodes.
       DO grid2_add=1,grid2_size
         grid2_centroid_lon(grid2_add)=Arecv(grid2_add)
@@ -649,50 +652,50 @@ C$OMP END PARALLEL
       DO grid1_add=1,grid1_size
         Asend(grid1_add)=grid1_frac(grid1_add)
       END DO
-      call mpi_allreduce(Asend, Arecv, grid1_size, MPI_DOUBLE,                 &
-     &                   MPI_SUM, MyComm, MyError)
+      call mpi_allreduce(Asend, Arecv, grid1_size, MPI_DOUBLE,          &
+     &                   MPI_SUM, MPI_COMM_WAVE, IERR_MPI)
 !  fill the working array as a sum from all nodes.
       DO grid1_add=1,grid1_size
         grid1_frac(grid1_add)=Arecv(grid1_add)
       END DO
       deallocate(Asend, Arecv)
-!#endif
-
-
-
-
-
-!#ifdef W3_SCRIP_JCW
 !
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!  Both sweeps are now done.
 !  Here we need to gather all the data that was computed in 
-!  store_link_cnsrv. 
+!  store_link_cnsrv.  Then we allow the Master node to
+!  compute the rest after these steps. 
 !
-! gather total number of links that were computed on each processor.
+!  gather total number of links that were computed on each processor.
 !
-      allocate(Numlinks(Nprocs))
+      allocate(Numlinks(NTPROC))
       call mpi_gather(num_links_map1, 1, MPI_INT, Numlinks, 1, MPI_INT, &
-     &                0, MyComm, MyError)
+     &                0, MPI_COMM_WAVE, IERR_MPI)
 !
 !  Now gather all the weights from other nodes to make one combined set.
 !
-      IF (MyRank.ne.0) THEN
+      IF (IPROC.ne.0) THEN
         allocate (Asendi(num_links_map1))
         Asendi=0
 !
+!  Send grid1 add map1.
         DO i=1,num_links_map1
           Asendi(i)=grid1_add_map1(i)
         END DO
         call mpi_send(Asendi, num_links_map1, MPI_INT, 0,               &
-     &                10, MyComm, MyError)
+     &                10, MPI_COMM_WAVE, IERR_MPI)
 !
-        Asendi(1:num_links_map1)=grid2_add_map1(1:num_links_map1)
+!  Send grid2 add map1.
+        DO i=1,num_links_map1
+          Asendi(i)=grid2_add_map1(i)
+        END DO
         call mpi_send(Asendi, num_links_map1, MPI_INT, 0,               &
-     &                20, MyComm, MyError)
-!
+     &                20, MPI_COMM_WAVE, IERR_MPI)
         deallocate (Asendi)
+!
+!  Send wts map1.
         allocate (Asend(num_links_map1*num_wts))
         Asend=0
-!
         ij=0
         DO i=1,num_links_map1
           DO j=1,num_wts
@@ -701,12 +704,10 @@ C$OMP END PARALLEL
           END DO
         END DO
         call mpi_send(Asend, num_links_map1*num_wts, MPI_DOUBLE, 0,     &
-     &                30, MyComm, MyError)
+     &                30, MPI_COMM_WAVE, IERR_MPI)
         deallocate (Asend)
       ELSE                ! we are on the Master
-
-
-        DO i=2,Nprocs
+        DO i=2,NTPROC
           allocate (Arecv1(Numlinks(i)))            !grid1_add_map1
           allocate (Arecv2(Numlinks(i)))            !grid2_add_map1
           allocate (Arecvw(num_wts*Numlinks(i)))    !wts_map1
@@ -716,20 +717,21 @@ C$OMP END PARALLEL
           Arecvw=zero
           Arecvw2d=zero
 !
-!         Receiving grid1 area.
+!         Receiving grd1 add map1 (grid1 area).
 !
           call mpi_recv(Arecv1, Numlinks(i), MPI_INT, i-1, 10,          &
-     &                  MyComm, status, MyError)
+     &                  MPI_COMM_WAVE, status, IERR_MPI)
 !
-!         Receiving grid2 area.
+!         Receiving grid2 add map1 (grid2 area).
 !
           call mpi_recv(Arecv2, Numlinks(i), MPI_INT, i-1, 20,          &
-     &                  MyComm, status, MyError)
+     &                  MPI_COMM_WAVE, status, IERR_MPI)
 !
-!         Receiving weights
+!         Receiving weights map1
 !
           call mpi_recv(Arecvw, Numlinks(i)*num_wts, MPI_DOUBLE,i-1,30, &
-     &                  MyComm, status, MyError)
+     &                  MPI_COMM_WAVE, status, IERR_MPI)
+!         restructure wts to be (1:num_wts,numlinks)
           ij=0
           DO nlink=1,Numlinks(i)
             DO j=1,num_wts
@@ -741,9 +743,9 @@ C$OMP END PARALLEL
 !
 !     if the link already exists, add the weight to the current weight
 !     arrays
-!
+!     This is taken from subroutine store_link_cnsrv.
 !-----------------------------------------------------------------------
-          do nlink=1,Numlinks(i)
+          DO nlink=1,Numlinks(i)
             add1=Arecv1(nlink)
             add2=Arecv2(nlink)
             got_weight=0
@@ -787,39 +789,40 @@ C$OMP END PARALLEL
           deallocate (Arecv1, Arecv2, Arecvw, Arecvw2d)
         END DO
       END IF
-
 !
-!  Now distribute: num_links_map1, , max_links_map1
-!                  grid1_add_map1, grid2_add_map1, wts_map1,
-!                  link_add1, link_add2
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!
+!  Now distribute: num_links_map1, grid1_add_map1, grid2_add_map1, 
+!                  wts_map1, link_add1, link_add2, max_links_map1
 !
 !  send num_links_map1
 !
       call mpi_bcast(num_links_map1, 1, MPI_INT,                        &
-     &                0, MyComm, MyError)
+     &                0, MPI_COMM_WAVE, IERR_MPI)
 ! force this
       max_links_map1=num_links_map1
-      call mpi_barrier(MyComm, MyError)
 !
 ! here we do what is in resize_remap_vars and just make the
 ! sizes of grid1_add_map1, grid2_add_map1, and wts_map1 to be
 ! the same size as on the 0 node.
 !
-       IF (MyRank.ne.0) THEN
+       IF (IPROC.ne.0) THEN
          deallocate (grid1_add_map1, grid2_add_map1, wts_map1)
-         allocate (  grid1_add_map1(num_links_map1),
-     &               grid2_add_map1(num_links_map1),
+         allocate (  grid1_add_map1(num_links_map1),                    &
+     &               grid2_add_map1(num_links_map1),                    &
      &             wts_map1(num_wts,num_links_map1))
       END IF
-!just save the valid parts of these
-      IF (MyRank.eq.0) THEN
+      IF (IPROC.eq.0) THEN
+!
+!  Only save the valid parts of grid1_add_map1, grid2_add_map1, wts_map1
+!
         allocate (Asendi(num_links_map1))
 !
         DO i=1,num_links_map1
           Asendi(i)=grid1_add_map1(i)
         END DO
         deallocate (grid1_add_map1)
-        allocate (  grid1_add_map1(num_links_map1) )
+        allocate ( grid1_add_map1(num_links_map1) )
         DO i=1,num_links_map1
           grid1_add_map1(i)=Asendi(i)
         END DO
@@ -854,35 +857,35 @@ C$OMP END PARALLEL
 !
       allocate (Asendi(num_links_map1))
       Asendi=0
-      IF (MyRank.eq.0) THEN
+      IF (IPROC.eq.0) THEN
         DO i=1,num_links_map1
           Asendi(i)=grid1_add_map1(i)
         END DO
       END IF
-      call mpi_barrier(MyComm, MyError)
-
       call mpi_bcast(Asendi, num_links_map1, MPI_INT,                   &
-     &                0, MyComm, MyError)
-      IF (MyRank.ne.0) THEN
-        grid1_add_map1(1:num_links_map1)=Asendi(1:num_links_map1)
+     &                0, MPI_COMM_WAVE, IERR_MPI)
+      IF (IPROC.ne.0) THEN
+        DO i=1,num_links_map1
+          grid1_add_map1(i)=Asendi(i)
+        END DO
       END IF
 !
 !  send grid2_add_map1
 !
       Asendi=0
-      IF (MyRank.eq.0) THEN
+      IF (IPROC.eq.0) THEN
         DO i=1,num_links_map1
           Asendi(i)=grid2_add_map1(i)
         END DO
       END IF
       call mpi_bcast(Asendi, num_links_map1, MPI_INT,                   &
-     &                0, MyComm, MyError)
-      IF (MyRank.ne.0) THEN
-!       grid2_add_map1=0
-        grid2_add_map1(1:num_links_map1)=Asendi(1:num_links_map1)
+     &                0, MPI_COMM_WAVE, IERR_MPI)
+      IF (IPROC.ne.0) THEN
+        DO i=1,num_links_map1
+          grid2_add_map1(i)=Asendi(i)
+        END DO
       END IF
       deallocate (Asendi)
-      call mpi_barrier(MyComm, MyError)
 !
 !  send wts_map1
 !
@@ -890,7 +893,7 @@ C$OMP END PARALLEL
       Asend=zero
 !
       ij=0
-      IF (MyRank.eq.0) THEN
+      IF (IPROC.eq.0) THEN
         DO i=1,num_links_map1
           DO j=1,num_wts
             ij=ij+1
@@ -900,8 +903,8 @@ C$OMP END PARALLEL
       END IF
       ij=num_links_map1*num_wts
       call mpi_bcast(Asend, ij, MPI_DOUBLE,                             &
-     &               0, MyComm, MyError)
-      IF (MyRank.ne.0) THEN
+     &               0, MPI_COMM_WAVE, IERR_MPI)
+      IF (IPROC.ne.0) THEN
         wts_map1=zero
         ij=0
         DO i=1,num_links_map1
@@ -912,66 +915,8 @@ C$OMP END PARALLEL
         END DO
       END IF
       deallocate (Asend)
-!
-!  send link_add1
-!
-      allocate (Asendi(grid1_size*2))
-      Asendi=0
-      IF (MyRank.eq.0) THEN
-        ij=0
-        DO i=1,grid1_size
-          DO j=1,2
-            ij=ij+1
-            Asendi(ij)=link_add1(j,i)
-          END DO
-        END DO
-      END IF
-      call mpi_bcast(Asendi, grid1_size*2, MPI_INT,                     &
-     &               0, MyComm, MyError)
-      IF (MyRank.ne.0) THEN
-        link_add1=0
-        ij=0
-        DO i=1,grid1_size
-          DO j=1,2
-            ij=ij+1
-            link_add1(j,i)=Asendi(ij)
-          END DO
-        END DO
-      END IF
-      deallocate (Asendi)
-!
-!  send link_add2
-!
-      allocate (Asendi(grid2_size*2))
-      Asendi=0
-      IF (MyRank.eq.0) THEN
-        ij=0
-        DO i=1,grid2_size
-          DO j=1,2
-            ij=ij+1
-            Asendi(ij)=link_add2(j,i)
-          END DO
-        END DO
-      END IF
-      call mpi_bcast(Asendi, grid2_size*2, MPI_INT,                     &
-     &               0, MyComm, MyError)
-      IF (MyRank.ne.0) THEN
-        link_add2=0
-        ij=0
-        DO i=1,grid2_size
-          DO j=1,2
-            ij=ij+1
-            link_add2(j,i)=Asendi(ij)
-          END DO
-        END DO
-      END IF
-      deallocate (Asendi)
-!
       deallocate(Numlinks)
-!      CALL mpi_comm_rank (MyComm, MyRank, MyError)
-!#endif
-
-
+#endif
 !-----------------------------------------------------------------------
 !
 !     correct for situations where N/S pole not explicitly included in
