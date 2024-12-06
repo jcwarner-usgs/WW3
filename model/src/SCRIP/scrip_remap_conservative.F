@@ -354,9 +354,6 @@ C$OMP& srch_center_lon_find_adj_cell)
 
       call timer_start(1)
 
-C$OMP PARALLEL DEFAULT(SHARED) PRIVATE(grid1_add) NUM_THREADS(nthreads)
-
-C$OMP DO SCHEDULE(DYNAMIC)
 
 
 #ifdef W3_SCRIPMPI
@@ -380,6 +377,10 @@ C$OMP DO SCHEDULE(DYNAMIC)
       grid1_str=1
       grid1_end=grid1_size
 #endif
+
+C$OMP PARALLEL DEFAULT(SHARED) PRIVATE(grid1_add) NUM_THREADS(nthreads)
+
+C$OMP DO SCHEDULE(DYNAMIC)
       do grid1_add = grid1_str,grid1_end
 
          if (mod(grid1_add,progint) .eq. 0 .and. is_master) then
@@ -389,7 +390,6 @@ C$OMP DO SCHEDULE(DYNAMIC)
          call cell_integrate(grid1_add, grid_num, phi_or_theta)
 
       end do                    ! do grid1_add=...
-
 C$OMP END DO
 
 C$OMP END PARALLEL
@@ -397,7 +397,7 @@ C$OMP END PARALLEL
 
 #ifdef W3_SCRIPMPI
 !
-!  Here we need to gather all the data processed and 
+!  Here we need to gather all the data processed and
 !  send to each proc so they know the full data set.
 !
 !  grid1 integrate
@@ -461,7 +461,7 @@ C$OMP END PARALLEL
       DO grid1_add=1,grid1_size
         Asend(grid1_add)=zero
         Arecv(grid1_add)=zero
-      END DO 
+      END DO
 !  fill the send for this tile.
       DO grid1_add=grid1_str,grid1_end
         Asend(grid1_add)=grid1_centroid_lon(grid1_add)
@@ -520,10 +520,6 @@ C$OMP END PARALLEL
 
       call timer_start(2)
 
-C$OMP PARALLEL DEFAULT(SHARED) PRIVATE(grid2_add) NUM_THREADS(nthreads)
-
-C$OMP DO SCHEDULE(DYNAMIC)
-
 #ifdef W3_SCRIPMPI
 !
 ! To do this in mpi, we will just break up the sweep loops into chunks. Then
@@ -543,6 +539,9 @@ C$OMP DO SCHEDULE(DYNAMIC)
       grid2_str=1
       grid2_end=grid2_size
 #endif
+C$OMP PARALLEL DEFAULT(SHARED) PRIVATE(grid2_add) NUM_THREADS(nthreads)
+
+C$OMP DO SCHEDULE(DYNAMIC)
       do grid2_add = grid2_str,grid2_end
 
          if (mod(grid2_add,progint) .eq. 0 .and. is_master) then
@@ -552,7 +551,6 @@ C$OMP DO SCHEDULE(DYNAMIC)
          call cell_integrate(grid2_add, grid_num, phi_or_theta)
 
       end do                    ! do grid2_add=...
-
 C$OMP END DO
 
 C$OMP END PARALLEL
@@ -562,7 +560,7 @@ C$OMP END PARALLEL
 
 #ifdef W3_SCRIPMPI
 !
-!  Here we need to gather all the data processed and 
+!  Here we need to gather all the data processed and
 !  send to each proc so they know the full data set.
 !
 !  grid2 integrate
@@ -662,9 +660,9 @@ C$OMP END PARALLEL
 !
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !  Both sweeps are now done.
-!  Here we need to gather all the data that was computed in 
+!  Here we need to gather all the data that was computed in
 !  store_link_cnsrv.  Then we allow the Master node to
-!  compute the rest after these steps. 
+!  compute the rest after these steps.
 !
 !  gather total number of links that were computed on each processor.
 !
@@ -766,8 +764,8 @@ C$OMP END PARALLEL
             end do
 !-----------------------------------------------------------------------
 !
-!     if the link does not yet exist, increment number of links and 
-!     check to see if remap arrays need to be increased to accomodate 
+!     if the link does not yet exist, increment number of links and
+!     check to see if remap arrays need to be increased to accomodate
 !     the new link.  then store the link.
 !
 !-----------------------------------------------------------------------
@@ -792,7 +790,7 @@ C$OMP END PARALLEL
 !
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !
-!  Now distribute: num_links_map1, grid1_add_map1, grid2_add_map1, 
+!  Now distribute: num_links_map1, grid1_add_map1, grid2_add_map1,
 !                  wts_map1, link_add1, link_add2, max_links_map1
 !
 !  send num_links_map1
