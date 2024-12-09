@@ -45,11 +45,12 @@
     },
     {
         "name": "scripmpi",
-        "num_switches": "upto2",
-        "description": "",
+        "num_switches": "upto1",
+        "description": "use MPI parallelism for SCRIP regridding",
         "valid-options": [
             {
-                "name": "SCRIPMPI"
+                "name": "SCRIPMPI",
+                "requires": ["SCRIP", "MPI"]
             }
         ]
     },
